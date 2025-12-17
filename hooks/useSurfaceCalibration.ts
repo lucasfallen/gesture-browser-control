@@ -28,6 +28,7 @@ interface UseSurfaceCalibrationReturn {
   mapToGrid: (handPosition: ScreenPoint) => ScreenPoint | null;
   toggleGridMode: () => void;
   resetCalibration: () => void;
+  updateGridBounds: (newGridBounds: GridBounds) => void;
 }
 
 export const useSurfaceCalibration = ({
@@ -57,8 +58,12 @@ export const useSurfaceCalibration = ({
     const imageData = ctx.getImageData(0, 0, width, height);
     const data = imageData.data;
 
-    // Create binary mask for white/light areas
+    // Use luminance-based detection (more robust than RGB threshold)
+    // Luminance = 0.299*R + 0.587*G + 0.114*B
+    // Also check average RGB value for simplicity
     const mask: boolean[][] = [];
+    let whitePixelCount = 0;
+    
     for (let y = 0; y < height; y++) {
       mask[y] = [];
       for (let x = 0; x < width; x++) {
@@ -66,13 +71,24 @@ export const useSurfaceCalibration = ({
         const r = data[idx];
         const g = data[idx + 1];
         const b = data[idx + 2];
-        // Check if pixel is white/light (all channels above threshold)
-        const isWhite = r >= SURFACE_WHITE_THRESHOLD && 
-                       g >= SURFACE_WHITE_THRESHOLD && 
-                       b >= SURFACE_WHITE_THRESHOLD;
+        
+        // Calculate luminance
+        const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+        
+        // Calculate average RGB (simpler check)
+        const avgRGB = (r + g + b) / 3;
+        
+        // Pixel is white/light if luminance OR average RGB is above threshold
+        // This is more permissive and works better with different lighting conditions
+        const isWhite = luminance >= SURFACE_WHITE_THRESHOLD || avgRGB >= SURFACE_WHITE_THRESHOLD;
         mask[y][x] = isWhite;
+        if (isWhite) whitePixelCount++;
       }
     }
+
+    // Debug: log white pixel percentage
+    const whitePercentage = (whitePixelCount / (width * height)) * 100;
+    console.log(`White pixels detected: ${whitePercentage.toFixed(1)}% (threshold: ${SURFACE_WHITE_THRESHOLD})`);
 
     // Find largest connected white region using flood fill
     const visited: boolean[][] = [];
@@ -133,9 +149,61 @@ export const useSurfaceCalibration = ({
       }
     }
 
-    // Validate minimum size
-    if (largestBox && largestBox.width * largestBox.height >= SURFACE_MIN_SIZE) {
+    // If flood fill didn't find a good region, try a simpler approach:
+    // Find bounding box of all white pixels
+    if (!largestBox || largestBox.width * largestBox.height < SURFACE_MIN_SIZE * 0.1) {
+      let minX = width, maxX = 0, minY = height, maxY = 0;
+      let foundWhite = false;
+      let whitePixelsInSimple = 0;
+      
+      // Sample pixels (every 3 pixels for better coverage)
+      for (let y = 0; y < height; y += 3) {
+        for (let x = 0; x < width; x += 3) {
+          if (mask[y] && mask[y][x]) {
+            foundWhite = true;
+            whitePixelsInSimple++;
+            minX = Math.min(minX, x);
+            maxX = Math.max(maxX, x);
+            minY = Math.min(minY, y);
+            maxY = Math.max(maxY, y);
+          }
+        }
+      }
+      
+      if (foundWhite) {
+        const boxWidth = (maxX - minX) / width;
+        const boxHeight = (maxY - minY) / height;
+        
+        // Use a very lenient threshold for the simple method
+        if (boxWidth > 0.03 && boxHeight > 0.03) { // At least 3% in each dimension
+          // Add some padding to the detected box
+          const padding = 0.02; // 2% padding
+          largestBox = {
+            x: Math.max(0, (minX / width) - padding),
+            y: Math.max(0, (minY / height) - padding),
+            width: Math.min(1, boxWidth + (padding * 2)),
+            height: Math.min(1, boxHeight + (padding * 2))
+          };
+          console.log(`✓ Surface detected (simple method): ${(boxWidth * 100).toFixed(1)}% × ${(boxHeight * 100).toFixed(1)}% (${whitePixelsInSimple} pixels)`);
+        } else {
+          console.log(`⚠ Surface too small: ${(boxWidth * 100).toFixed(1)}% × ${(boxHeight * 100).toFixed(1)}%`);
+        }
+      }
+    }
+
+    // Validate minimum size (very lenient threshold - 1% of image)
+    const minSizeThreshold = 0.01; // 1% of image (very lenient)
+    if (largestBox && largestBox.width * largestBox.height >= minSizeThreshold) {
+      const areaPercent = (largestBox.width * largestBox.height * 100).toFixed(1);
+      console.log(`✓✓ Surface detected: ${(largestBox.width * 100).toFixed(1)}% × ${(largestBox.height * 100).toFixed(1)}% (area: ${areaPercent}%)`);
       return largestBox;
+    }
+
+    if (whitePixelCount > 0) {
+      const areaPercent = largestBox ? (largestBox.width * largestBox.height * 100).toFixed(1) : '0';
+      console.log(`⚠ White pixels found (${whitePixelCount}, ${whitePercentage.toFixed(1)}%) but area too small: ${areaPercent}% (min: ${(minSizeThreshold * 100).toFixed(1)}%)`);
+    } else {
+      console.log(`⚠ No white pixels detected. Threshold: ${SURFACE_WHITE_THRESHOLD}. Try: 1) Better lighting 2) Lower threshold 3) Closer to surface`);
     }
 
     return null;
@@ -264,6 +332,54 @@ export const useSurfaceCalibration = ({
     }
   }, []);
 
+  // Update grid bounds (for manual editing)
+  // When user edits the grid on screen, recalculate the corresponding surface area in camera
+  const updateGridBounds = useCallback((newGridBounds: GridBounds) => {
+    if (!gridBounds) {
+      setGridBounds(newGridBounds);
+      return;
+    }
+
+    // Calculate the scale change in screenBox
+    const oldScreenBox = gridBounds.screenBox;
+    const newScreenBox = newGridBounds.screenBox;
+    
+    // Calculate scale factors
+    const scaleX = newScreenBox.width / oldScreenBox.width;
+    const scaleY = newScreenBox.height / oldScreenBox.height;
+    
+    // Calculate position offset (normalized)
+    const offsetX = (newScreenBox.x - oldScreenBox.x) / oldScreenBox.width;
+    const offsetY = (newScreenBox.y - oldScreenBox.y) / oldScreenBox.height;
+    
+    // Apply the same transformation to surfaceBox
+    // This keeps the grid in camera synchronized with the grid on screen
+    const oldSurfaceBox = gridBounds.surfaceBox;
+    const newSurfaceBox: BoundingBox = {
+      x: oldSurfaceBox.x + (offsetX * oldSurfaceBox.width),
+      y: oldSurfaceBox.y + (offsetY * oldSurfaceBox.height),
+      width: oldSurfaceBox.width * scaleX,
+      height: oldSurfaceBox.height * scaleY
+    };
+    
+    // Clamp to valid bounds (0-1)
+    newSurfaceBox.x = Math.max(0, Math.min(1 - newSurfaceBox.width, newSurfaceBox.x));
+    newSurfaceBox.y = Math.max(0, Math.min(1 - newSurfaceBox.height, newSurfaceBox.y));
+    newSurfaceBox.width = Math.min(newSurfaceBox.width, 1 - newSurfaceBox.x);
+    newSurfaceBox.height = Math.min(newSurfaceBox.height, 1 - newSurfaceBox.y);
+    
+    // Recalculate aspect ratio
+    const newAspectRatio = newSurfaceBox.width / newSurfaceBox.height;
+    
+    const updatedGridBounds: GridBounds = {
+      surfaceBox: newSurfaceBox,
+      screenBox: newScreenBox,
+      aspectRatio: newAspectRatio
+    };
+    
+    setGridBounds(updatedGridBounds);
+  }, [gridBounds]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -283,7 +399,8 @@ export const useSurfaceCalibration = ({
     confirmCalibration,
     mapToGrid,
     toggleGridMode,
-    resetCalibration
+    resetCalibration,
+    updateGridBounds
   };
 };
 

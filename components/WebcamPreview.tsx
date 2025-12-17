@@ -16,6 +16,7 @@ interface WebcamPreviewProps {
     detectedSurface?: BoundingBox | null;
     gridBounds?: GridBounds | null;
     showGrid?: boolean;
+    isEditing?: boolean;
 }
 
 const HAND_CONNECTIONS = [
@@ -33,7 +34,8 @@ const WebcamPreview: React.FC<WebcamPreviewProps> = ({
     isCameraReady,
     detectedSurface,
     gridBounds,
-    showGrid = false
+    showGrid = false,
+    isEditing = false
 }) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -112,25 +114,28 @@ const WebcamPreview: React.FC<WebcamPreviewProps> = ({
 
                     // 3. Draw detected surface and grid (if available)
                     if ((detectedSurface || gridBounds) && showGrid) {
+                        // Always use surfaceBox from gridBounds if available, otherwise use detectedSurface
                         const surface = gridBounds?.surfaceBox || detectedSurface;
                         if (surface) {
                             // Calculate pixel coordinates (video is mirrored, so we need to mirror X)
+                            // surfaceBox is in normalized video coordinates (0-1)
                             const x = (1 - surface.x - surface.width) * canvas.width; // Mirror X
                             const y = surface.y * canvas.height;
                             const width = surface.width * canvas.width;
                             const height = surface.height * canvas.height;
 
-                            // Draw bounding box
-                            ctx.strokeStyle = '#22c55e'; // Green
-                            ctx.lineWidth = 3;
-                            ctx.setLineDash([]);
+                            // Draw bounding box (different color when editing)
+                            const borderColor = isEditing ? '#3b82f6' : '#22c55e'; // Blue when editing, green otherwise
+                            ctx.strokeStyle = borderColor;
+                            ctx.lineWidth = isEditing ? 4 : 3;
+                            ctx.setLineDash(isEditing ? [10, 5] : []);
                             ctx.strokeRect(x, y, width, height);
 
                             // Draw grid lines inside the detected surface
                             const gridLines = 4; // 4x4 grid (5 lines each direction)
-                            ctx.strokeStyle = '#22c55e';
+                            ctx.strokeStyle = borderColor;
                             ctx.lineWidth = 1;
-                            ctx.globalAlpha = 0.5;
+                            ctx.globalAlpha = isEditing ? 0.7 : 0.5;
                             ctx.setLineDash([5, 5]);
 
                             // Vertical lines
@@ -155,8 +160,8 @@ const WebcamPreview: React.FC<WebcamPreviewProps> = ({
                             ctx.globalAlpha = 1.0;
 
                             // Draw corner markers
-                            const cornerSize = 10;
-                            ctx.fillStyle = '#22c55e';
+                            const cornerSize = isEditing ? 12 : 10;
+                            ctx.fillStyle = borderColor;
                             
                             // Top-left
                             ctx.fillRect(x - cornerSize/2, y - cornerSize/2, cornerSize, cornerSize);
@@ -168,16 +173,27 @@ const WebcamPreview: React.FC<WebcamPreviewProps> = ({
                             ctx.fillRect(x + width - cornerSize/2, y + height - cornerSize/2, cornerSize, cornerSize);
 
                             // Draw label
-                            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-                            ctx.fillRect(x, y - 20, width, 20);
-                            ctx.fillStyle = '#22c55e';
-                            ctx.font = '12px monospace';
+                            ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                            ctx.fillRect(x, y - 25, width, 25);
+                            ctx.fillStyle = borderColor;
+                            ctx.font = 'bold 12px monospace';
                             ctx.textAlign = 'center';
+                            const labelText = isEditing 
+                                ? `Área de Trabalho (Edite na tela)`
+                                : `Área: ${Math.round(surface.width * 100)}% × ${Math.round(surface.height * 100)}%`;
                             ctx.fillText(
-                                `Área: ${Math.round(surface.width * 100)}% × ${Math.round(surface.height * 100)}%`,
+                                labelText,
                                 x + width / 2,
-                                y - 5
+                                y - 10
                             );
+                            if (isEditing) {
+                                ctx.font = '10px monospace';
+                                ctx.fillText(
+                                    'Mantenha a mão dentro desta área',
+                                    x + width / 2,
+                                    y - 2
+                                );
+                            }
                         }
                     }
                 }
@@ -189,7 +205,7 @@ const WebcamPreview: React.FC<WebcamPreviewProps> = ({
         return () => {
             if (animationFrameId) cancelAnimationFrame(animationFrameId);
         };
-    }, [isCameraReady, videoRef, resultsRef, detectedSurface, gridBounds, showGrid]);
+    }, [isCameraReady, videoRef, resultsRef, detectedSurface, gridBounds, showGrid, isEditing]);
 
     if (!isCameraReady) return null;
 

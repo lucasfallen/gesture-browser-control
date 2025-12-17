@@ -21,8 +21,8 @@ export const COLORS = {
 };
 
 // Detecção de superfície
-export const SURFACE_WHITE_THRESHOLD = 200; // Valor RGB mínimo para considerar branco (0-255)
-export const SURFACE_MIN_SIZE = 0.2; // 20% da imagem mínima para considerar válida
+export const SURFACE_WHITE_THRESHOLD = 180; // Luminância mínima para considerar branco (0-255) - reduzido para melhor detecção
+export const SURFACE_MIN_SIZE = 0.1; // 10% da imagem mínima para considerar válida (reduzido para melhor detecção)
 export const SURFACE_DETECTION_INTERVAL = 100; // ms entre detecções durante calibração
 
 // Detecção de toque

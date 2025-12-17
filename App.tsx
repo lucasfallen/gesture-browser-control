@@ -12,8 +12,8 @@ import CursorOverlay from './components/CursorOverlay';
 import SurfaceCalibrationUI from './components/SurfaceCalibrationUI';
 import GridOverlay from './components/GridOverlay';
 import { GestureType, ScreenPoint } from './types';
-import { DOUBLE_CLICK_TIMEOUT } from './constants';
-import { MousePointer2, Hand, Info, CheckCircle, AlertCircle, Settings, Grid3x3 } from 'lucide-react';
+import { DOUBLE_CLICK_TIMEOUT, MOVEMENT_SMOOTHING } from './constants';
+import { MousePointer2, Hand, Info, CheckCircle, AlertCircle, Settings, Grid3x3, Maximize2 } from 'lucide-react';
 
 const App: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -30,12 +30,16 @@ const App: React.FC = () => {
     confirmCalibration,
     mapToGrid,
     toggleGridMode,
-    resetCalibration
+    resetCalibration,
+    updateGridBounds
   } = useSurfaceCalibration({
     videoRef,
     getCurrentFrame,
     isCameraReady
   });
+
+  // Grid editing state
+  const [isEditingGrid, setIsEditingGrid] = useState(false);
 
   // Touch Detection (only active in grid mode)
   const { isTouching, touchType } = useTouchDetection({
@@ -58,6 +62,12 @@ const App: React.FC = () => {
   const pinchReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clickCountRef = useRef(0);
   const lastTouchTypeRef = useRef<'index' | 'middle' | null>(null);
+  
+  // Smooth cursor position for grid mode
+  const smoothCursorPosRef = useRef<ScreenPoint>({ x: 0, y: 0 });
+  
+  // Helper for linear interpolation (same as useMediaPipe)
+  const lerp = (start: number, end: number, factor: number) => start + (end - start) * factor;
 
   // Main Logic Loop
   useEffect(() => {
@@ -71,11 +81,24 @@ const App: React.FC = () => {
         // Map video position to grid coordinates
         const gridPos = mapToGrid(data.videoPosition);
         if (gridPos) {
-          setCursorPos(gridPos);
+          // Apply smoothing to grid position (same as normal mode)
+          const currentX = smoothCursorPosRef.current.x;
+          const currentY = smoothCursorPosRef.current.y;
+          
+          const newX = lerp(currentX, gridPos.x, MOVEMENT_SMOOTHING);
+          const newY = lerp(currentY, gridPos.y, MOVEMENT_SMOOTHING);
+          
+          smoothCursorPosRef.current = { x: newX, y: newY };
+          setCursorPos(smoothCursorPosRef.current);
+        } else {
+          // Hand is outside grid bounds, don't update cursor
+          // Keep last position or hide cursor
         }
       } else {
-        // Normal mode: use direct cursor position
+        // Normal mode: use direct cursor position (already smoothed in useMediaPipe)
         setCursorPos(data.cursor);
+        // Reset smooth position when switching modes
+        smoothCursorPosRef.current = data.cursor;
       }
       
       setIsPinching(data.isPinching);
@@ -213,18 +236,32 @@ const App: React.FC = () => {
           {isCameraReady && (
             <div className="absolute top-8 right-8 flex gap-2">
               {gridBounds && (
-                <button
-                  onClick={toggleGridMode}
-                  className={`px-4 py-2 rounded-xl font-medium transition-colors flex items-center gap-2 ${
-                    isGridMode
-                      ? 'bg-blue-600 hover:bg-blue-500 text-white'
-                      : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
-                  }`}
-                  title={isGridMode ? 'Desativar Modo Grid' : 'Ativar Modo Grid'}
-                >
-                  <Grid3x3 className="w-4 h-4" />
-                  {isGridMode ? 'Grid Ativo' : 'Grid Inativo'}
-                </button>
+                <>
+                  <button
+                    onClick={toggleGridMode}
+                    className={`px-4 py-2 rounded-xl font-medium transition-colors flex items-center gap-2 ${
+                      isGridMode
+                        ? 'bg-blue-600 hover:bg-blue-500 text-white'
+                        : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
+                    }`}
+                    title={isGridMode ? 'Desativar Modo Grid' : 'Ativar Modo Grid'}
+                  >
+                    <Grid3x3 className="w-4 h-4" />
+                    {isGridMode ? 'Grid Ativo' : 'Grid Inativo'}
+                  </button>
+                  <button
+                    onClick={() => setIsEditingGrid(!isEditingGrid)}
+                    className={`px-4 py-2 rounded-xl font-medium transition-colors flex items-center gap-2 ${
+                      isEditingGrid
+                        ? 'bg-green-600 hover:bg-green-500 text-white'
+                        : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
+                    }`}
+                    title={isEditingGrid ? 'Finalizar Edição' : 'Editar Grid'}
+                  >
+                    <Maximize2 className="w-4 h-4" />
+                    {isEditingGrid ? 'Editando...' : 'Editar Grid'}
+                  </button>
+                </>
               )}
               <button
                 onClick={() => {
@@ -378,6 +415,7 @@ const App: React.FC = () => {
                 detectedSurface={detectedSurface}
                 gridBounds={gridBounds}
                 showGrid={isCalibrating || isGridMode}
+                isEditing={isEditingGrid}
             />
             <CursorOverlay 
                 position={cursorPos} 
@@ -388,6 +426,8 @@ const App: React.FC = () => {
               <GridOverlay 
                 gridBounds={gridBounds}
                 isVisible={showGridOverlay || isGridMode}
+                onGridChange={updateGridBounds}
+                isEditing={isEditingGrid}
               />
             )}
         </>
