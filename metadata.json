@@ -1,0 +1,7 @@
+{
+  "name": "Gesture Browser Control",
+  "description": "Control a virtual mouse cursor using hand gestures via webcam.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

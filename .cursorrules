@@ -1,0 +1,108 @@
+# Regras do Projeto - Gesture Browser Control
+
+## Visão Geral do Projeto
+
+Este é um projeto React/TypeScript que permite controlar o cursor do mouse através de gestos de mão capturados pela webcam, utilizando MediaPipe para detecção de landmarks da mão.
+
+## Stack Tecnológica
+
+- **React 19.2.0** - Framework UI
+- **TypeScript 5.8.2** - Tipagem estática
+- **Vite 6.2.0** - Build tool e dev server
+- **MediaPipe Tasks Vision 0.10.9** - Detecção de gestos de mão
+- **Tailwind CSS** - Estilização (via CDN)
+- **Lucide React** - Ícones
+
+## Estrutura do Projeto
+
+```
+gesture-browser-control/
+├── App.tsx                 # Componente principal
+├── components/             # Componentes React
+│   ├── CursorOverlay.tsx   # Overlay do cursor virtual
+│   └── WebcamPreview.tsx   # Preview da webcam com landmarks
+├── hooks/                  # Custom hooks
+│   └── useMediaPipe.ts     # Hook para MediaPipe
+├── types.ts                # Definições TypeScript
+├── constants.ts            # Constantes e configurações
+├── docs/                   # Documentação
+└── .cursor/                # Regras e comandos do Cursor
+```
+
+## Convenções de Código
+
+### TypeScript
+- Usar interfaces para objetos
+- Usar enums para conjuntos fixos de valores
+- Evitar `any`, preferir `unknown` quando necessário
+- Tipar todos os parâmetros e retornos de funções
+
+### React
+- Usar functional components com hooks
+- Preferir `useRef` para valores mutáveis que não causam re-render
+- Usar `useState` apenas para estado que afeta UI
+- Separar lógica de negócio em custom hooks
+
+### Nomenclatura
+- Componentes: PascalCase (`CursorOverlay.tsx`)
+- Hooks: camelCase com prefixo `use` (`useMediaPipe.ts`)
+- Funções: camelCase (`handlePinchRelease`)
+- Constantes: UPPER_SNAKE_CASE (`PINCH_THRESHOLD`)
+- Tipos/Interfaces: PascalCase (`GestureType`, `ScreenPoint`)
+
+### Imports
+Ordem recomendada:
+1. Bibliotecas externas
+2. Componentes locais
+3. Hooks locais
+4. Types/Interfaces
+5. Constantes/Utils
+
+### Formatação
+- 2 espaços para indentação
+- Ponto e vírgula no final das linhas
+- Aspas simples para strings
+- Máximo ~100 caracteres por linha
+
+## Padrões Específicos do Projeto
+
+### MediaPipe
+- Usar `HandLandmarker` com `runningMode: "VIDEO"`
+- Processar resultados em `requestAnimationFrame` para performance
+- Usar landmarks 8 (Index Tip) e 4 (Thumb Tip) para detecção de pinch
+- Aplicar espelhamento horizontal (1 - x) para coordenadas X
+
+### Gestos
+- **Mover cursor**: Posição do dedo indicador (landmark 8)
+- **Pinch**: Distância entre indicador e polegar < `PINCH_THRESHOLD`
+- **Clique esquerdo**: Pinch único (1x)
+- **Clique direito**: Pinch duplo (2x) dentro de `DOUBLE_CLICK_TIMEOUT`
+
+### Performance
+- Usar `requestAnimationFrame` para loops de detecção
+- Aplicar suavização (lerp) no movimento do cursor
+- Limpar recursos no cleanup do `useEffect` (cancelAnimationFrame, close landmarker, stop tracks)
+
+### UI/UX
+- Cursor virtual sempre visível com feedback visual
+- Preview da webcam opcional (canto inferior direito)
+- Logs de eventos para debug
+- Feedback visual imediato em gestos detectados
+
+## Boas Práticas
+
+1. **Cleanup**: Sempre limpar recursos (animation frames, streams, landmarkers) no cleanup do `useEffect`
+2. **Refs vs State**: Usar `useRef` para valores que não precisam causar re-render (handDataRef, lastResultsRef)
+3. **Error Handling**: Tratar erros de câmera e MediaPipe com mensagens amigáveis
+4. **Acessibilidade**: Manter cursor virtual acessível e feedback visual claro
+5. **Performance**: Minimizar re-renders desnecessários, usar refs quando possível
+
+## Dependências
+
+Não substituir dependências sem necessidade. Se substituir, incluir comentário explicando a mudança.
+
+## Documentação
+
+- Consultar `.cursor/rules/` para detalhes de arquitetura, estrutura e estilo
+- Consultar `docs/` para documentação de funcionalidades e uso
+
