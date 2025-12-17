@@ -7,11 +7,15 @@
 import React, { useEffect, useRef } from 'react';
 import { HandLandmarkerResult } from '@mediapipe/tasks-vision';
 import { COLORS } from '../constants';
+import { BoundingBox, GridBounds } from '../types';
 
 interface WebcamPreviewProps {
     videoRef: React.RefObject<HTMLVideoElement | null>;
     resultsRef: React.MutableRefObject<HandLandmarkerResult | null>;
     isCameraReady: boolean;
+    detectedSurface?: BoundingBox | null;
+    gridBounds?: GridBounds | null;
+    showGrid?: boolean;
 }
 
 const HAND_CONNECTIONS = [
@@ -23,7 +27,14 @@ const HAND_CONNECTIONS = [
     [5, 9], [9, 13], [13, 17], [0, 5], [0, 17] // Palm
 ];
 
-const WebcamPreview: React.FC<WebcamPreviewProps> = ({ videoRef, resultsRef, isCameraReady }) => {
+const WebcamPreview: React.FC<WebcamPreviewProps> = ({ 
+    videoRef, 
+    resultsRef, 
+    isCameraReady,
+    detectedSurface,
+    gridBounds,
+    showGrid = false
+}) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
 
     useEffect(() => {
@@ -98,6 +109,77 @@ const WebcamPreview: React.FC<WebcamPreviewProps> = ({ videoRef, resultsRef, isC
                             ctx.fill();
                         }
                     }
+
+                    // 3. Draw detected surface and grid (if available)
+                    if ((detectedSurface || gridBounds) && showGrid) {
+                        const surface = gridBounds?.surfaceBox || detectedSurface;
+                        if (surface) {
+                            // Calculate pixel coordinates (video is mirrored, so we need to mirror X)
+                            const x = (1 - surface.x - surface.width) * canvas.width; // Mirror X
+                            const y = surface.y * canvas.height;
+                            const width = surface.width * canvas.width;
+                            const height = surface.height * canvas.height;
+
+                            // Draw bounding box
+                            ctx.strokeStyle = '#22c55e'; // Green
+                            ctx.lineWidth = 3;
+                            ctx.setLineDash([]);
+                            ctx.strokeRect(x, y, width, height);
+
+                            // Draw grid lines inside the detected surface
+                            const gridLines = 4; // 4x4 grid (5 lines each direction)
+                            ctx.strokeStyle = '#22c55e';
+                            ctx.lineWidth = 1;
+                            ctx.globalAlpha = 0.5;
+                            ctx.setLineDash([5, 5]);
+
+                            // Vertical lines
+                            for (let i = 1; i < gridLines; i++) {
+                                const lineX = x + (width / gridLines) * i;
+                                ctx.beginPath();
+                                ctx.moveTo(lineX, y);
+                                ctx.lineTo(lineX, y + height);
+                                ctx.stroke();
+                            }
+
+                            // Horizontal lines
+                            for (let i = 1; i < gridLines; i++) {
+                                const lineY = y + (height / gridLines) * i;
+                                ctx.beginPath();
+                                ctx.moveTo(x, lineY);
+                                ctx.lineTo(x + width, lineY);
+                                ctx.stroke();
+                            }
+
+                            ctx.setLineDash([]);
+                            ctx.globalAlpha = 1.0;
+
+                            // Draw corner markers
+                            const cornerSize = 10;
+                            ctx.fillStyle = '#22c55e';
+                            
+                            // Top-left
+                            ctx.fillRect(x - cornerSize/2, y - cornerSize/2, cornerSize, cornerSize);
+                            // Top-right
+                            ctx.fillRect(x + width - cornerSize/2, y - cornerSize/2, cornerSize, cornerSize);
+                            // Bottom-left
+                            ctx.fillRect(x - cornerSize/2, y + height - cornerSize/2, cornerSize, cornerSize);
+                            // Bottom-right
+                            ctx.fillRect(x + width - cornerSize/2, y + height - cornerSize/2, cornerSize, cornerSize);
+
+                            // Draw label
+                            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                            ctx.fillRect(x, y - 20, width, 20);
+                            ctx.fillStyle = '#22c55e';
+                            ctx.font = '12px monospace';
+                            ctx.textAlign = 'center';
+                            ctx.fillText(
+                                `Área: ${Math.round(surface.width * 100)}% × ${Math.round(surface.height * 100)}%`,
+                                x + width / 2,
+                                y - 5
+                            );
+                        }
+                    }
                 }
             }
             animationFrameId = requestAnimationFrame(render);
@@ -107,7 +189,7 @@ const WebcamPreview: React.FC<WebcamPreviewProps> = ({ videoRef, resultsRef, isC
         return () => {
             if (animationFrameId) cancelAnimationFrame(animationFrameId);
         };
-    }, [isCameraReady, videoRef, resultsRef]);
+    }, [isCameraReady, videoRef, resultsRef, detectedSurface, gridBounds, showGrid]);
 
     if (!isCameraReady) return null;
 

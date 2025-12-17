@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { HandLandmarker, FilesetResolver, HandLandmarkerResult } from '@mediapipe/tasks-vision';
 import { HandData } from '../types';
 import { MOVEMENT_SMOOTHING, PINCH_THRESHOLD } from '../constants';
@@ -31,6 +31,25 @@ export const useMediaPipe = (videoRef: React.RefObject<HTMLVideoElement | null>)
   const getDistance = (p1: {x: number, y: number}, p2: {x: number, y: number}) => {
       return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
   };
+
+  // Method to capture current video frame for surface calibration
+  const getCurrentFrame = useCallback((): HTMLCanvasElement | null => {
+    if (!videoRef.current || !isCameraReady) return null;
+    
+    const video = videoRef.current;
+    if (video.videoWidth === 0 || video.videoHeight === 0) return null;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    }
+    
+    return canvas;
+  }, [videoRef, isCameraReady]);
 
   useEffect(() => {
     let isActive = true;
@@ -135,10 +154,25 @@ export const useMediaPipe = (videoRef: React.RefObject<HTMLVideoElement | null>)
             const distance = getDistance(indexTip, thumbTip);
             const isPinching = distance < PINCH_THRESHOLD;
 
+            // 3. Store landmarks with Z coordinates for touch detection
+            const landmarksWithZ = landmarks.map(lm => ({
+                x: lm.x,
+                y: lm.y,
+                z: lm.z || undefined // Z may not always be available
+            }));
+
+            // Store normalized video position for grid mapping
+            const videoPosition = {
+                x: 1 - indexTip.x, // Mirrored X
+                y: indexTip.y
+            };
+
             handDataRef.current = {
                 cursor: { x: newX, y: newY },
                 isPinching,
-                pinchDistance: distance
+                pinchDistance: distance,
+                landmarks: landmarksWithZ,
+                videoPosition
             };
         }
     };
@@ -156,5 +190,11 @@ export const useMediaPipe = (videoRef: React.RefObject<HTMLVideoElement | null>)
     };
   }, [videoRef]);
 
-  return { isCameraReady, handDataRef, lastResultsRef, error };
+  return { 
+    isCameraReady, 
+    handDataRef, 
+    lastResultsRef, 
+    error,
+    getCurrentFrame 
+  };
 };

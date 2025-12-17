@@ -5,20 +5,49 @@
 
 import React, { useRef, useState, useEffect } from 'react';
 import { useMediaPipe } from './hooks/useMediaPipe';
+import { useSurfaceCalibration } from './hooks/useSurfaceCalibration';
+import { useTouchDetection } from './hooks/useTouchDetection';
 import WebcamPreview from './components/WebcamPreview';
 import CursorOverlay from './components/CursorOverlay';
+import SurfaceCalibrationUI from './components/SurfaceCalibrationUI';
+import GridOverlay from './components/GridOverlay';
 import { GestureType, ScreenPoint } from './types';
 import { DOUBLE_CLICK_TIMEOUT } from './constants';
-import { MousePointer2, Hand, Info, CheckCircle, AlertCircle } from 'lucide-react';
+import { MousePointer2, Hand, Info, CheckCircle, AlertCircle, Settings, Grid3x3 } from 'lucide-react';
 
 const App: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const { isCameraReady, handDataRef, lastResultsRef, error } = useMediaPipe(videoRef);
+  const { isCameraReady, handDataRef, lastResultsRef, error, getCurrentFrame } = useMediaPipe(videoRef);
+
+  // Surface Calibration
+  const {
+    isCalibrating,
+    isGridMode,
+    gridBounds,
+    detectedSurface,
+    startCalibration,
+    cancelCalibration,
+    confirmCalibration,
+    mapToGrid,
+    toggleGridMode,
+    resetCalibration
+  } = useSurfaceCalibration({
+    videoRef,
+    getCurrentFrame,
+    isCameraReady
+  });
+
+  // Touch Detection (only active in grid mode)
+  const { isTouching, touchType } = useTouchDetection({
+    handDataRef,
+    isGridMode
+  });
 
   // App State
   const [cursorPos, setCursorPos] = useState<ScreenPoint>({ x: 0, y: 0 });
   const [isPinching, setIsPinching] = useState(false);
   const [detectedGesture, setDetectedGesture] = useState<GestureType>(GestureType.NONE);
+  const [showGridOverlay, setShowGridOverlay] = useState(false);
   
   // Feedback Log
   const [logs, setLogs] = useState<string[]>([]);
@@ -28,6 +57,7 @@ const App: React.FC = () => {
   const wasPinchingRef = useRef(false);
   const pinchReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clickCountRef = useRef(0);
+  const lastTouchTypeRef = useRef<'index' | 'middle' | null>(null);
 
   // Main Logic Loop
   useEffect(() => {
@@ -36,26 +66,54 @@ const App: React.FC = () => {
     const loop = () => {
       const data = handDataRef.current;
       
-      // Update Cursor State UI
-      setCursorPos(data.cursor);
+      // Update cursor position based on mode
+      if (isGridMode && gridBounds && data.videoPosition) {
+        // Map video position to grid coordinates
+        const gridPos = mapToGrid(data.videoPosition);
+        if (gridPos) {
+          setCursorPos(gridPos);
+        }
+      } else {
+        // Normal mode: use direct cursor position
+        setCursorPos(data.cursor);
+      }
+      
       setIsPinching(data.isPinching);
 
       // --- Gesture Detection Engine ---
-      
-      // 1. Detect Pinch Release (Rising Edge)
-      if (wasPinchingRef.current && !data.isPinching) {
-          // User just released a pinch
-          handlePinchRelease(data.cursor);
+      if (isGridMode) {
+        // Grid mode: use touch detection
+        if (touchType && touchType !== lastTouchTypeRef.current) {
+          // New touch detected
+          const pos = isGridMode && gridBounds && data.videoPosition 
+            ? mapToGrid(data.videoPosition) || data.cursor
+            : data.cursor;
+          
+          if (touchType === 'index') {
+            triggerClick(pos, 'left');
+          } else if (touchType === 'middle') {
+            triggerClick(pos, 'right');
+          }
+          lastTouchTypeRef.current = touchType;
+        } else if (!touchType) {
+          lastTouchTypeRef.current = null;
+        }
+      } else {
+        // Normal mode: use pinch detection
+        // 1. Detect Pinch Release (Rising Edge)
+        if (wasPinchingRef.current && !data.isPinching) {
+            // User just released a pinch
+            handlePinchRelease(data.cursor);
+        }
+        wasPinchingRef.current = data.isPinching;
       }
-
-      wasPinchingRef.current = data.isPinching;
       
       animationFrameId = requestAnimationFrame(loop);
     };
 
     loop();
     return () => cancelAnimationFrame(animationFrameId);
-  }, []);
+  }, [isGridMode, gridBounds, mapToGrid, touchType]);
 
   // Handle Logic: Distinguish Single vs Double Click
   const handlePinchRelease = (pos: ScreenPoint) => {
@@ -143,13 +201,50 @@ const App: React.FC = () => {
       <div className="relative z-10 w-full h-full flex flex-col items-center justify-center p-6">
           
           {/* Header */}
-          <div className="absolute top-8 text-center">
-              <h1 className="text-3xl font-light tracking-tight text-white mb-2 flex items-center gap-3">
+          <div className="absolute top-8 left-1/2 transform -translate-x-1/2 text-center">
+              <h1 className="text-3xl font-light tracking-tight text-white mb-2 flex items-center gap-3 justify-center">
                   <MousePointer2 className="w-8 h-8 text-blue-400" />
                   Gesture Browser
               </h1>
               <p className="text-slate-400 text-sm">Controle o mouse via webcam</p>
           </div>
+
+          {/* Mode Toggle Button */}
+          {isCameraReady && (
+            <div className="absolute top-8 right-8 flex gap-2">
+              {gridBounds && (
+                <button
+                  onClick={toggleGridMode}
+                  className={`px-4 py-2 rounded-xl font-medium transition-colors flex items-center gap-2 ${
+                    isGridMode
+                      ? 'bg-blue-600 hover:bg-blue-500 text-white'
+                      : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
+                  }`}
+                  title={isGridMode ? 'Desativar Modo Grid' : 'Ativar Modo Grid'}
+                >
+                  <Grid3x3 className="w-4 h-4" />
+                  {isGridMode ? 'Grid Ativo' : 'Grid Inativo'}
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  if (isCalibrating) {
+                    cancelCalibration();
+                  } else if (gridBounds) {
+                    resetCalibration();
+                    startCalibration();
+                  } else {
+                    startCalibration();
+                  }
+                }}
+                className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-medium transition-colors flex items-center gap-2"
+                title="Calibrar Superfície"
+              >
+                <Settings className="w-4 h-4" />
+                {isCalibrating ? 'Cancelar' : gridBounds ? 'Recalibrar' : 'Calibrar'}
+              </button>
+            </div>
+          )}
 
           {/* Setup / Loading State */}
           {!isCameraReady && (
@@ -171,35 +266,73 @@ const App: React.FC = () => {
                       </h2>
                       
                       <div className="space-y-6">
-                          <div className="flex items-start gap-4">
-                              <div className="bg-blue-500/20 p-3 rounded-xl">
-                                  <Hand className="w-6 h-6 text-blue-400" />
+                          {isGridMode ? (
+                            <>
+                              <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-3 mb-4">
+                                <p className="text-blue-400 text-sm font-medium flex items-center gap-2">
+                                  <Grid3x3 className="w-4 h-4" />
+                                  Modo Grid Ativo
+                                </p>
                               </div>
-                              <div>
-                                  <h3 className="font-medium text-white">Mover Cursor</h3>
-                                  <p className="text-sm text-slate-400 mt-1">Mova o dedo indicador livremente pela tela.</p>
+                              <div className="flex items-start gap-4">
+                                  <div className="bg-blue-500/20 p-3 rounded-xl">
+                                      <Hand className="w-6 h-6 text-blue-400" />
+                                  </div>
+                                  <div>
+                                      <h3 className="font-medium text-white">Mover Cursor</h3>
+                                      <p className="text-sm text-slate-400 mt-1">Mova o dedo indicador sobre a superfície calibrada.</p>
+                                  </div>
                               </div>
-                          </div>
-
-                          <div className="flex items-start gap-4">
-                              <div className="bg-green-500/20 p-3 rounded-xl">
-                                  <CheckCircle className="w-6 h-6 text-green-400" />
+                              <div className="flex items-start gap-4">
+                                  <div className="bg-green-500/20 p-3 rounded-xl">
+                                      <CheckCircle className="w-6 h-6 text-green-400" />
+                                  </div>
+                                  <div>
+                                      <h3 className="font-medium text-white">Clique Esquerdo</h3>
+                                      <p className="text-sm text-slate-400 mt-1">Toque a superfície com o <strong className="text-white">dedo indicador</strong>.</p>
+                                  </div>
                               </div>
-                              <div>
-                                  <h3 className="font-medium text-white">Clique Esquerdo</h3>
-                                  <p className="text-sm text-slate-400 mt-1">Junte o indicador e o dedão <strong className="text-white">1x</strong> (Pinch).</p>
+                              <div className="flex items-start gap-4">
+                                  <div className="bg-purple-500/20 p-3 rounded-xl">
+                                      <AlertCircle className="w-6 h-6 text-purple-400" />
+                                  </div>
+                                  <div>
+                                      <h3 className="font-medium text-white">Clique Direito</h3>
+                                      <p className="text-sm text-slate-400 mt-1">Toque a superfície com o <strong className="text-white">dedo médio</strong>.</p>
+                                  </div>
                               </div>
-                          </div>
-
-                          <div className="flex items-start gap-4">
-                              <div className="bg-purple-500/20 p-3 rounded-xl">
-                                  <AlertCircle className="w-6 h-6 text-purple-400" />
+                            </>
+                          ) : (
+                            <>
+                              <div className="flex items-start gap-4">
+                                  <div className="bg-blue-500/20 p-3 rounded-xl">
+                                      <Hand className="w-6 h-6 text-blue-400" />
+                                  </div>
+                                  <div>
+                                      <h3 className="font-medium text-white">Mover Cursor</h3>
+                                      <p className="text-sm text-slate-400 mt-1">Mova o dedo indicador livremente pela tela.</p>
+                                  </div>
                               </div>
-                              <div>
-                                  <h3 className="font-medium text-white">Clique Direito</h3>
-                                  <p className="text-sm text-slate-400 mt-1">Junte o indicador e o dedão <strong className="text-white">2x</strong> rapidamente.</p>
+                              <div className="flex items-start gap-4">
+                                  <div className="bg-green-500/20 p-3 rounded-xl">
+                                      <CheckCircle className="w-6 h-6 text-green-400" />
+                                  </div>
+                                  <div>
+                                      <h3 className="font-medium text-white">Clique Esquerdo</h3>
+                                      <p className="text-sm text-slate-400 mt-1">Junte o indicador e o dedão <strong className="text-white">1x</strong> (Pinch).</p>
+                                  </div>
                               </div>
-                          </div>
+                              <div className="flex items-start gap-4">
+                                  <div className="bg-purple-500/20 p-3 rounded-xl">
+                                      <AlertCircle className="w-6 h-6 text-purple-400" />
+                                  </div>
+                                  <div>
+                                      <h3 className="font-medium text-white">Clique Direito</h3>
+                                      <p className="text-sm text-slate-400 mt-1">Junte o indicador e o dedão <strong className="text-white">2x</strong> rapidamente.</p>
+                                  </div>
+                              </div>
+                            </>
+                          )}
                       </div>
                   </div>
 
@@ -241,15 +374,32 @@ const App: React.FC = () => {
             <WebcamPreview 
                 videoRef={videoRef} 
                 resultsRef={lastResultsRef} 
-                isCameraReady={isCameraReady} 
+                isCameraReady={isCameraReady}
+                detectedSurface={detectedSurface}
+                gridBounds={gridBounds}
+                showGrid={isCalibrating || isGridMode}
             />
             <CursorOverlay 
                 position={cursorPos} 
-                isPinching={isPinching} 
+                isPinching={isGridMode ? isTouching : isPinching} 
                 lastGesture={detectedGesture} 
             />
+            {gridBounds && (
+              <GridOverlay 
+                gridBounds={gridBounds}
+                isVisible={showGridOverlay || isGridMode}
+              />
+            )}
         </>
       )}
+
+      {/* Surface Calibration UI */}
+      <SurfaceCalibrationUI
+        isCalibrating={isCalibrating}
+        detectedSurface={detectedSurface}
+        onConfirm={confirmCalibration}
+        onCancel={cancelCalibration}
+      />
     </div>
   );
 };
